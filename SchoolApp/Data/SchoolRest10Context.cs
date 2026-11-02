@@ -3,9 +3,9 @@ using SchoolApp.Models;
 
 namespace SchoolApp.Data
 {
-    public class SchoolMvc10Context : DbContext
+    public class SchoolRest10Context : DbContext
     {
-        public SchoolMvc10Context(DbContextOptions<SchoolMvc10Context> options) : base(options)
+        public SchoolRest10Context(DbContextOptions<SchoolRest10Context> options) : base(options)
         { }
 
         public DbSet<Teacher> Teachers { get; set; }
