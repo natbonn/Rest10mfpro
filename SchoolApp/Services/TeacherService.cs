@@ -22,7 +22,7 @@ namespace SchoolApp.Services
             _logger = logger;
         }
 
-        public async Task SignUpUserAsync(TeacherSignupDTO teacherSignupDTO)
+        public async Task<UserReadOnlyDTO> SignUpUserAsync(TeacherSignupDTO teacherSignupDTO)
         {
             Teacher teacher = _mapper.Map<Teacher>(teacherSignupDTO);
             User user = _mapper.Map<User>(teacherSignupDTO);
@@ -41,7 +41,7 @@ namespace SchoolApp.Services
 
             await _unitOfWork.SaveAsync();
             _logger.LogInformation("Teacher with id={Id} signed up successfully", teacher.Id);
-            
+            return _mapper.Map<UserReadOnlyDTO>(user);
         }
     }
 }
