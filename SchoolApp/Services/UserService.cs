@@ -12,134 +12,117 @@ using System.Linq.Expressions;
 using System.Security.Claims;
 using System.Text;
 
-namespace SchoolApp.Services
+namespace SchoolApp.Services;
+
+public class UserService : IUserService
 {
-    public class UserService : IUserService
+    private readonly IEncryptionUtil _encryptionUtil;
+    private readonly IUnitOfWork _unitOfWork;
+    private IMapper _mapper;
+    private readonly ILogger<UserService> _logger;
+    private readonly IConfiguration _configuration;
+
+    public UserService(IEncryptionUtil encryptionUtil, IUnitOfWork unitOfWork, 
+        IMapper mapper, ILogger<UserService> logger, IConfiguration configuration)
     {
-        private readonly IEncryptionUtil _encryptionUtil;
-        private readonly IUnitOfWork _unitOfWork;
-        private IMapper _mapper;
-        private readonly ILogger<UserService> _logger;
-        private readonly IConfiguration _configuration;
+        _encryptionUtil = encryptionUtil;
+        _unitOfWork = unitOfWork;
+        _mapper = mapper;
+        _logger = logger;
+        _configuration = configuration;
+    }
 
-        public UserService(IEncryptionUtil encryptionUtil, IUnitOfWork unitOfWork, 
-            IMapper mapper, ILogger<UserService> logger, IConfiguration configuration)
+    public async Task<PaginatedResult<UserReadOnlyDTO>> GetPaginatedUsersFilteredAsync(int pageNumber, int pageSize, 
+        UserFiltersDTO userFiltersDTO)
+    {
+        List<User> users = [];
+        List<Expression<Func<User, bool>>> predicates = [];
+
+        if (!string.IsNullOrEmpty(userFiltersDTO.Username))
         {
-            _encryptionUtil = encryptionUtil;
-            _unitOfWork = unitOfWork;
-            _mapper = mapper;
-            _logger = logger;
-            _configuration = configuration;
+            predicates.Add(u => u.Username == userFiltersDTO.Username);
         }
 
-        public async Task<PaginatedResult<UserReadOnlyDTO>> GetPaginatedUsersFilteredAsync(int pageNumber, int pageSize, 
-            UserFiltersDTO userFiltersDTO)
+        if (!string.IsNullOrEmpty(userFiltersDTO.Email))
         {
-            List<User> users = [];
-            List<Expression<Func<User, bool>>> predicates = [];
-
-            if (!string.IsNullOrEmpty(userFiltersDTO.Username))
-            {
-                predicates.Add(u => u.Username == userFiltersDTO.Username);
-            }
-
-            if (!string.IsNullOrEmpty(userFiltersDTO.Email))
-            {
-                predicates.Add(u => u.Email == userFiltersDTO.Email);
-            }
-
-            if (!string.IsNullOrEmpty(userFiltersDTO.UserRole))
-            {
-                predicates.Add(u => u.Role.Name == userFiltersDTO.UserRole);
-            }
-
-            var paginatedResult = await _unitOfWork.UserRepository.GetUsersAsync(pageNumber, pageSize, predicates);
-
-            var dtoResult = new PaginatedResult<UserReadOnlyDTO>()
-            {
-                Data = _mapper.Map<List<UserReadOnlyDTO>>(paginatedResult.Data),
-                TotalRecords = paginatedResult.TotalRecords,
-                PageNumber = paginatedResult.PageNumber,
-                PageSize = paginatedResult.PageSize
-            };
-
-            _logger.LogInformation("Retrieved {Count} users", dtoResult.Data.Count);
-            return dtoResult;
+            predicates.Add(u => u.Email == userFiltersDTO.Email);
         }
 
-        public async Task<UserReadOnlyDTO?> GetUserByUsernameAsync(string username)
+        if (!string.IsNullOrEmpty(userFiltersDTO.UserRole))
         {
-            try
-            {
-                User? user = await _unitOfWork.UserRepository.GetUserByUsernameAsync(username);
-
-                if (user is null)     // or == - better is
-                {
-                    throw new EntityNotFoundException("User", "Entity not found.");
-                }
-
-                _logger.LogInformation("User found with username={Username}", username);
-                return _mapper.Map<UserReadOnlyDTO>(user);
-            } 
-            catch (EntityNotFoundException)
-            {
-                _logger.LogError("Error retrieving user with username={Username}", username);
-                throw;
-            }
+            predicates.Add(u => u.Role.Name == userFiltersDTO.UserRole);
         }
 
-        public async Task<User?> VerifyAndGetUserAsync(UserLoginDTO credentials)
+        var paginatedResult = await _unitOfWork.UserRepository.GetUsersAsync(pageNumber, pageSize, predicates);
+
+        var dtoResult = new PaginatedResult<UserReadOnlyDTO>()
         {
-            try
-            {
-                User? user = await _unitOfWork.UserRepository.GetUserByUsernameAsync(credentials.Username!);
+            Data = _mapper.Map<List<UserReadOnlyDTO>>(paginatedResult.Data),
+            TotalRecords = paginatedResult.TotalRecords,
+            PageNumber = paginatedResult.PageNumber,
+            PageSize = paginatedResult.PageSize
+        };
 
-                if (user is null || !_encryptionUtil.IsValidPassword(credentials.Password!, user.Password))
-                {
-                    throw new EntityNotAuthorizedException("Auth", "Bad Credentials");
-                }
+        _logger.LogInformation("Retrieved {Count} users", dtoResult.Data.Count);
+        return dtoResult;
+    }
 
-                _logger.LogInformation("User with username={Username} verified for login.", credentials.Username);
-                return user;
-            }
-            catch (EntityNotAuthorizedException)
-            {
-                _logger.LogError("Authentication failed for username={Username}", credentials.Username);
-                return null;
-            }
+    public async Task<UserReadOnlyDTO?> GetUserByUsernameAsync(string username)
+    {
+        User? user = await _unitOfWork.UserRepository.GetUserByUsernameAsync(username);
+
+        if (user is null)     // or == - better is
+        {
+            throw new EntityNotFoundException("User", "Entity not found.");
         }
 
-        public string CreateUserToken(User user)
+        _logger.LogInformation("User found with username={Username}", username);
+        return _mapper.Map<UserReadOnlyDTO>(user);
+    }
+
+    public async Task<User?> VerifyAndGetUserAsync(UserLoginDTO credentials)
+    {
+        User? user = await _unitOfWork.UserRepository.GetUserByUsernameAsync(credentials.Username!);
+
+        if (user is null || !_encryptionUtil.IsValidPassword(credentials.Password!, user.Password))
         {
-            var secretKey = _configuration["Jwt:Secret"]!;
-            var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
-
-            var signingCredentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
-
-            var claimsInfo = new List<Claim>
-            {
-                // well known claims
-                new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-                new Claim(ClaimTypes.Name, user.Username),
-                new Claim(ClaimTypes.Email, user.Email),
-                new Claim(ClaimTypes.Role, user.Role.Name)
-            };
-
-            // Add custom claims for user capabilities
-            claimsInfo.AddRange(user.Role.Capabilities
-                    .Select(c => new Claim("Capability", c.Name)));
-
-            var jwtSecurityToken = new JwtSecurityToken(
-                issuer: _configuration["Jwt:Issuer"],
-                audience: _configuration["Jwt:Audience"],
-                claims: claimsInfo,
-                expires: DateTime.UtcNow.AddHours(3),
-                signingCredentials: signingCredentials
-            );
-
-            // Serialize the token to a string
-            return new JwtSecurityTokenHandler().WriteToken(jwtSecurityToken);
+            throw new EntityNotAuthorizedException("Auth", "Bad Credentials");
         }
+
+        _logger.LogInformation("User with username={Username} verified for login.", credentials.Username);
+        return user;
+    }
+
+    public string CreateUserToken(User user)
+    {
+        var secretKey = _configuration["Jwt:Secret"]!;
+        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
+
+        var signingCredentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
+
+        var claimsInfo = new List<Claim>
+        {
+            // well known claims
+            new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new Claim(ClaimTypes.Name, user.Username),
+            new Claim(ClaimTypes.Email, user.Email),
+            new Claim(ClaimTypes.Role, user.Role.Name)
+        };
+
+        // Add custom claims for user capabilities
+        claimsInfo.AddRange(user.Role.Capabilities
+                .Select(c => new Claim("Capability", c.Name)));
+
+        var jwtSecurityToken = new JwtSecurityToken(
+            issuer: _configuration["Jwt:Issuer"],
+            audience: _configuration["Jwt:Audience"],
+            claims: claimsInfo,
+            expires: DateTime.UtcNow.AddHours(3),
+            signingCredentials: signingCredentials
+        );
+
+        // Serialize the token to a string
+        return new JwtSecurityTokenHandler().WriteToken(jwtSecurityToken);
     }
 }
 

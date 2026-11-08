@@ -27,28 +27,21 @@ namespace SchoolApp.Services
             Teacher teacher = _mapper.Map<Teacher>(teacherSignupDTO);
             User user = _mapper.Map<User>(teacherSignupDTO);
 
-            try
-            {
-                User? existingUser = await _unitOfWork.UserRepository.GetUserByUsernameAsync(user.Username);
+            User? existingUser = await _unitOfWork.UserRepository.GetUserByUsernameAsync(user.Username);
                 
-                if (existingUser is not null)
-                {
-                    throw new EntityAlreadyExistsException("User", "User already exists.");
-                }
-                user.Teacher = teacher;
-                user.Password = _encryptionUtil.Encrypt(user.Password);
-
-                await _unitOfWork.UserRepository.AddAsync(user);
-                await _unitOfWork.TeacherRepository.AddAsync(teacher);
-
-                await _unitOfWork.SaveAsync();
-                _logger.LogInformation("Teacher with id={Id} signed up successfully", teacher.Id);
-            }
-            catch (EntityAlreadyExistsException)
+            if (existingUser is not null)
             {
-                _logger.LogWarning("Error signing up for teacher with username={Username}", teacher.User.Username);
-                throw;
+                throw new EntityAlreadyExistsException("User", "User already exists.");
             }
+            user.Teacher = teacher;
+            user.Password = _encryptionUtil.Encrypt(user.Password);
+
+            await _unitOfWork.UserRepository.AddAsync(user);
+            await _unitOfWork.TeacherRepository.AddAsync(teacher);
+
+            await _unitOfWork.SaveAsync();
+            _logger.LogInformation("Teacher with id={Id} signed up successfully", teacher.Id);
+            
         }
     }
 }
