@@ -12,92 +12,115 @@ using Serilog;
 using System.Text;
 using System.Reflection;
 using System.Text.Json.Serialization;
+using SchoolApp.Helpers;
 
-namespace SchoolApp
+namespace SchoolApp;
+
+public class Program
 {
-    public class Program
+    public static void Main(string[] args)
     {
-        public static void Main(string[] args)
+        var builder = WebApplication.CreateBuilder(args);
+
+        var connString = builder.Configuration.GetConnectionString("DevConnection");
+        builder.Services.AddDbContext<SchoolRest10Context>(options => options.UseSqlServer(connString));
+
+        builder.Host.UseSerilog((hostingContext, configuration) =>
         {
-            var builder = WebApplication.CreateBuilder(args);
+            configuration.ReadFrom.Configuration(hostingContext.Configuration);
+        });
 
-            var connString = builder.Configuration.GetConnectionString("DevConnection");
-            builder.Services.AddDbContext<SchoolRest10Context>(options => options.UseSqlServer(connString));
+        builder.Services.AddRepositories();
+        builder.Services.AddScoped<IUserService, UserService>();
+        builder.Services.AddScoped<ITeacherService, TeacherService>();
+        builder.Services.AddScoped<IApplicationService, ApplicationService>();
+        builder.Services.AddSingleton<IEncryptionUtil, EncryptionUtil>();
 
-            builder.Host.UseSerilog((hostingContext, configuration) =>
+        builder.Services.AddAutoMapper(cfg => cfg.AddProfile<MapperConfig>());
+        
+        var jwtSettings = builder.Configuration.GetSection("Jwt");
+        builder.Services.AddAuthentication(options =>
+        {
+            options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;   // if valid
+            options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;      // if not valid
+        }).AddJwtBearer(options =>
+        {
+            // in production, set it false, to avoid leaking information about the token validation
+            options.IncludeErrorDetails = builder.Environment.IsDevelopment(); // Default: true
+            options.TokenValidationParameters = new TokenValidationParameters
             {
-                configuration.ReadFrom.Configuration(hostingContext.Configuration);
-            });
+                ValidateIssuer = true,
+                ValidIssuer = jwtSettings["Issuer"],
+                ValidateAudience = true,
+                ValidAudience = jwtSettings["Audience"],
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["Secret"]!)),
+            };
+        });
 
-            builder.Services.AddRepositories();
-            builder.Services.AddScoped<IUserService, UserService>();
-            builder.Services.AddScoped<ITeacherService, TeacherService>();
-            builder.Services.AddScoped<IApplicationService, ApplicationService>();
-            builder.Services.AddSingleton<IEncryptionUtil, EncryptionUtil>();
+        builder.Services.AddCors(options =>
+        {
+            options.AddPolicy("AllowCFClient", policy => policy.WithOrigins(builder.Configuration["Cors:Origin"]!)
+            .AllowAnyMethod()
+            .AllowAnyHeader());
+        });
 
-            builder.Services.AddAutoMapper(cfg => cfg.AddProfile<MapperConfig>());
-            
-            var jwtSettings = builder.Configuration.GetSection("Jwt");
-            builder.Services.AddAuthentication(options =>
-            {
-                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;   // if valid
-                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;      // if not valid
-            }).AddJwtBearer(options =>
-            {
-                // in production, set it false, to avoid leaking information about the token validation
-                options.IncludeErrorDetails = builder.Environment.IsDevelopment(); // Default: true
-                options.TokenValidationParameters = new TokenValidationParameters
+        builder.Services.AddControllers().AddJsonOptions(options =>
+        {
+            // ignore null values in the response, so that the client does not receive unnecessary data
+            options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+            // convert enum values to string, so that the client receives a more readable response
+            options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+            // to avoid circular references in the response
+            options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
+        });
+
+
+        builder.Services.AddEndpointsApiExplorer();
+        builder.Services.AddSwaggerGen(options =>
+        {
+            options.SwaggerDoc("v1", new OpenApiInfo { Title = "School App", Version = "v1" });
+            var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
+            var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+            options.IncludeXmlComments(xmlPath);
+
+            options.AddSecurityDefinition(JwtBearerDefaults.AuthenticationScheme, 
+                new OpenApiSecurityScheme
                 {
-                    ValidateIssuer = true,
-                    ValidIssuer = jwtSettings["Issuer"],
-                    ValidateAudience = true,
-                    ValidAudience = jwtSettings["Audience"],
-                    ValidateLifetime = true,
-                    ValidateIssuerSigningKey = true,
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["Secret"]!)),
-                };
-            });
-
-            builder.Services.AddCors(options =>
-            {
-                options.AddPolicy("AllowCFClient", policy => policy.WithOrigins(builder.Configuration["Cors:Origin"]!)
-                .AllowAnyMethod()
-                .AllowAnyHeader());
-            });
-
-            builder.Services.AddControllers().AddJsonOptions(options =>
-            {
-                // ignore null values in the response, so that the client does not receive unnecessary data
-                options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
-                // convert enum values to string, so that the client receives a more readable response
-                options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
-                // to avoid circular references in the response
-                options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
-            });
+                    Description = "Jwt Authentication header using the Bearer Scheme",
+                    Type = SecuritySchemeType.Http,
+                    Scheme = JwtBearerDefaults.AuthenticationScheme,
+                    BearerFormat = "JWT"
+                });
+            options.OperationFilter<AuthorizeOperationFilter>();
+        });
 
 
-            builder.Services.AddControllers();
-            // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-            
-
-            var app = builder.Build();
-
-            // Configure the HTTP request pipeline.
-            if (app.Environment.IsDevelopment())
-            {
-                
-            }
-
-            app.UseHttpsRedirection();
-
-            app.UseCors("AllowCFClient");  // with this order
-            app.UseAuthentication();
-            app.UseAuthorization();
+        builder.Services.AddControllers();
+        // Learn more about configuring OpenAPI at https://aka.ms/aspnet/opeapi 
 
 
-            app.MapControllers();
+        var app = builder.Build();
 
-            app.Run();
+        // Configure the HTTP request pipeline.
+        if (app.Environment.IsDevelopment())
+        {
+            app.UseSwagger();
+            app.UseSwaggerUI();      
+            //app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "School App v1"));
+            //app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "School App v1"));
         }
+
+        app.UseHttpsRedirection();
+
+        app.UseCors("AllowCFClient");  // with this order
+        app.UseAuthentication();
+        app.UseAuthorization();
+
+
+        app.MapControllers();
+
+        app.Run();
     }
 }
