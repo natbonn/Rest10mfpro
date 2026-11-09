@@ -98,12 +98,21 @@ public class Program
 
 
         builder.Services.AddControllers();
+        builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+        builder.Services.AddProblemDetails();
         // Learn more about configuring OpenAPI at https://aka.ms/aspnet/opeapi 
+
+        builder.Services.AddAuthorization(options =>
+        {
+            options.AddPolicy("VIW_USERS", p => p.RequireClaim("Capability", "VIEW_USERS"));
+        });
 
 
         var app = builder.Build();
 
         // Configure the HTTP request pipeline.
+        app.UseExceptionHandler();
+
         if (app.Environment.IsDevelopment())
         {
             app.UseSwagger();
