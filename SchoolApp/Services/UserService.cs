@@ -80,6 +80,20 @@ public class UserService : IUserService
         return _mapper.Map<UserReadOnlyDTO>(user);
     }
 
+    public async Task<UserReadOnlyDTO> GetUserByIdAsync(int id)
+    {
+        var user = await _unitOfWork.UserRepository.GetAsync(id);
+
+        if (user == null)
+        {
+            throw new EntityNotFoundException("User", $"User with id {id} not found");
+        }
+
+        _logger.LogInformation("User with id {Id} found", id);
+
+        return _mapper.Map<UserReadOnlyDTO>(user);
+    }
+
     public async Task<User?> VerifyAndGetUserAsync(UserLoginDTO credentials)
     {
         User? user = await _unitOfWork.UserRepository.GetUserByUsernameAsync(credentials.Username!);
